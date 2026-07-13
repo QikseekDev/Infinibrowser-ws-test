@@ -1,0 +1,19 @@
+{
+  "headers": [
+    {
+      "source": "/api/search",
+      "has": [
+        {
+          "type": "query",
+          "key": "id"
+        }
+      ],
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=0, s-maxage=2592000, stale-while-revalidate=86400"
+        }
+      ]
+    }
+  ]
+}
