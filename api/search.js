@@ -6,19 +6,60 @@ export default async function handler(req, res) {
 
     if (!id) {
         return res.status(400).json({
-            error: "Missing ?id="
+            error: "Missing id parameter"
         });
     }
 
 
-    const items = await new Promise((resolve, reject)=>{
+    try {
+
+        const items = await search(id);
+
+        return res.status(200).json({
+            query: id,
+            items
+        });
+
+
+    } catch (err) {
+
+        console.error(err);
+
+        return res.status(500).json({
+            error: err.message
+        });
+
+    }
+}
+
+
+
+function search(query) {
+
+    return new Promise((resolve, reject)=>{
+
+        let finished = false;
+
 
         const ws = new WebSocket(
             "wss://infinibrowser.wiki/api/ws"
         );
 
 
+        const timeout = setTimeout(()=>{
+            if(!finished){
+                finished=true;
+                ws.close();
+                reject(new Error("WebSocket timeout"));
+            }
+        },15000);
+
+
+
         ws.on("open", ()=>{
+
+            console.log("WS connected");
+
 
             ws.send(JSON.stringify({
                 op:"identify",
@@ -29,6 +70,7 @@ export default async function handler(req, res) {
                 }
             }));
 
+
             setTimeout(()=>{
 
                 ws.send(JSON.stringify({
@@ -37,43 +79,83 @@ export default async function handler(req, res) {
                     data:{
                         offset:0,
                         internal_offset:0,
-                        query:id,
+                        query:query,
                         sort:"time",
                         order:"ascending"
                     }
                 }));
 
-            },300);
+            },500);
 
         });
 
 
+
         ws.on("message", data=>{
 
-            const msg=JSON.parse(data);
+            let msg;
+
+            try {
+                msg = JSON.parse(data.toString());
+            }
+            catch {
+                console.log("Non JSON:", data.toString());
+                return;
+            }
 
 
-            if(msg.op==="search"){
-                resolve(msg.data.items);
+            console.log(msg.op);
+
+
+            if(msg.op === "search" && !finished){
+
+                finished=true;
+
+                clearTimeout(timeout);
+
+                resolve(
+                    msg.data?.items || []
+                );
+
                 ws.close();
+
             }
 
         });
 
 
-        ws.on("error", reject);
+
+        ws.on("error", err=>{
+
+            if(!finished){
+
+                finished=true;
+
+                clearTimeout(timeout);
+
+                reject(err);
+
+            }
+
+        });
 
 
-        setTimeout(()=>{
-            reject(new Error("Timeout"));
-            ws.close();
-        },10000);
+        ws.on("close", ()=>{
+
+            if(!finished){
+
+                finished=true;
+
+                clearTimeout(timeout);
+
+                reject(
+                    new Error("WebSocket closed")
+                );
+
+            }
+
+        });
 
     });
 
-
-    res.json({
-        query:id,
-        items
-    });
 }
