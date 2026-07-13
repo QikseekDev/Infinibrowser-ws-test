@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>InfiniBrowser WS Explorer</title>
+<style>
+body{
+    font-family:Arial,sans-serif;
+    background:#111;
+    color:#fff;
+    margin:20px;
+}
+input,button,select{
+    padding:8px;
+    margin:4px;
+}
+.item{
+    padding:10px;
+    margin:6px 0;
+    background:#222;
+    border-radius:8px;
+}
+pre{
+    background:#1b1b1b;
+    padding:10px;
+    overflow:auto;
+    max-height:300px;
+}
+</style>
+</head>
+
+<body>
+
+<h2>InfiniBrowser WebSocket Explorer</h2>
+
+<button id="connect">Connect</button>
+
+<br>
+
+<input id="query" placeholder="Search element">
+
+<input id="offset" type="number" value="0" min="0">
+
+<select id="sort">
+<option value="time">Time</option>
+<option value="name">Name</option>
+<option value="popularity">Popularity</option>
+<option value="random">Random</option>
+</select>
+
+<button id="search">Search</button>
+
+<div id="results"></div>
+
+<h3>Debug</h3>
+<pre id="log"></pre>
+
+
+<script>
+
+let ws;
+let nonce = 1;
+
+const params = new URLSearchParams(location.search);
+
+const urlId = params.get("id");
+const auto = params.get("auto") !== "0";
+
+
+const log = (...msg)=>{
+    document.getElementById("log").textContent +=
+        msg.map(x =>
+            typeof x === "string"
+            ? x
+            : JSON.stringify(x,null,2)
+        ).join(" ")+"\n\n";
+};
+
+
+function connect(){
+
+    if(ws && ws.readyState === WebSocket.OPEN)
+        return;
+
+
+    ws = new WebSocket(
+        "wss://infinibrowser.wiki/api/ws"
+    );
+
+
+    ws.onopen = ()=>{
+
+        log("Connected");
+
+        ws.send(JSON.stringify({
+            op:"identify",
+            data:{
+                client:"InfCraftBrowser/1.6",
+                version:2,
+                token:null
+            }
+        }));
+
+
+        if(urlId){
+            document.getElementById("query").value=urlId;
+
+            setTimeout(search,300);
+        }
+    };
+
+
+    ws.onmessage=e=>{
+
+        const msg=JSON.parse(e.data);
+
+        log(msg);
+
+
+        if(msg.op==="search"){
+
+            const box=document.getElementById("results");
+
+            box.innerHTML="";
+
+
+            for(const item of msg.data.items){
+
+                const div=document.createElement("div");
+
+                div.className="item";
+
+                div.innerHTML=`
+                <b>${item.emoji || ""} ${item.text || item.id}</b>
+                <br>
+                ID: ${item.id}
+                `;
+
+
+                box.appendChild(div);
+            }
+
+
+            if(!msg.data.items.length)
+                box.innerHTML="<i>No results</i>";
+        }
+    };
+
+
+    ws.onerror=e=>{
+        log("WebSocket error",e);
+    };
+
+
+    ws.onclose=e=>{
+        log("Closed",e.code);
+    };
+}
+
+
+
+function search(){
+
+    if(!ws || ws.readyState!==WebSocket.OPEN){
+        alert("Connect first");
+        return;
+    }
+
+
+    const query=
+        document.getElementById("query").value;
+
+
+    const offset=
+        Number(document.getElementById("offset").value)||0;
+
+
+    const sort=
+        document.getElementById("sort").value;
+
+
+
+    history.replaceState(
+        null,
+        "",
+        "?id="+encodeURIComponent(query)+"&auto="+(auto?1:0)
+    );
+
+
+
+    ws.send(JSON.stringify({
+
+        op:"search",
+
+        nonce:nonce++,
+
+        data:{
+
+            offset:offset,
+
+            internal_offset:0,
+
+            query:query,
+
+            sort:sort,
+
+            order:"ascending"
+
+        }
+
+    }));
+
+}
+
+
+
+document.getElementById("connect").onclick=connect;
+
+document.getElementById("search").onclick=search;
+
+
+document.getElementById("query")
+.addEventListener("keydown",e=>{
+    if(e.key==="Enter")
+        search();
+});
+
+
+
+// Auto mode
+if(auto){
+
+    if(urlId){
+
+        document.getElementById("query").value=urlId;
+
+    }
+
+    connect();
+
+}
+
+</script>
+
+</body>
+</html>
