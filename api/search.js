@@ -1,131 +1,188 @@
+import express from "express";
+import cors from "cors";
 import WebSocket from "ws";
 
-export default async function handler(req, res) {
+const app = express();
 
-    const id = req.query.id;
+app.use(cors());
+app.use(express.json());
 
-    if (!id) {
-        return res.status(400).json({
-            error: "Missing id parameter"
-        });
-    }
+const PORT = process.env.PORT || 3000;
 
-
-    try {
-
-        const items = await search(id);
-
-        return res.status(200).json({
-            query: id,
-            items
-        });
+const cache = new Map();
 
 
-    } catch (err) {
-
-        console.error(err);
-
-        return res.status(500).json({
-            error: err.message
-        });
-
-    }
-}
+// Health check
+app.get("/health", (req,res)=>{
+    res.json({
+        status:"ok",
+        time:new Date().toISOString()
+    });
+});
 
 
 
-function search(query) {
+function connectInfini(query, offset, sort, order){
 
-    return new Promise((resolve, reject)=>{
+    return new Promise((resolve,reject)=>{
 
-        let finished = false;
-
-
-        const ws = new WebSocket(
-            "wss://infinibrowser.wiki/api/ws"
-        );
+        let finished=false;
 
 
-        const timeout = setTimeout(()=>{
+        const timeout=setTimeout(()=>{
+
             if(!finished){
+
                 finished=true;
-                ws.close();
-                reject(new Error("WebSocket timeout"));
+
+                try{
+                    ws.close();
+                }catch{}
+
+                reject(
+                    new Error("InfiniBrowser timeout")
+                );
             }
+
         },15000);
 
 
 
-        ws.on("open", ()=>{
+        const ws=new WebSocket(
+            "wss://infinibrowser.wiki/api/ws",
+            {
+                headers:{
+                    Origin:"https://infinibrowser.wiki",
+                    "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                }
+            }
+        );
 
-            console.log("WS connected");
+
+
+        ws.on("open",()=>{
 
 
             ws.send(JSON.stringify({
+
                 op:"identify",
+
                 data:{
-                    client:"JSON-API",
+
+                    client:"InfiniBrowser/1.6",
+
                     version:2,
+
                     token:null
                 }
+
             }));
+
 
 
             setTimeout(()=>{
 
+
                 ws.send(JSON.stringify({
+
                     op:"search",
+
                     nonce:1,
+
                     data:{
-                        offset:0,
+
+                        offset:Number(offset)||0,
+
                         internal_offset:0,
-                        query:query,
-                        sort:"time",
-                        order:"ascending"
+
+                        query:String(query),
+
+                        sort,
+
+                        order
+
                     }
+
                 }));
 
+
             },500);
+
 
         });
 
 
 
-        ws.on("message", data=>{
+        ws.on("message",(raw)=>{
+
 
             let msg;
 
-            try {
-                msg = JSON.parse(data.toString());
+
+            try{
+
+                msg=JSON.parse(
+                    raw.toString()
+                );
+
             }
-            catch {
-                console.log("Non JSON:", data.toString());
+            catch{
+
                 return;
+
             }
 
 
-            console.log(msg.op);
 
-
-            if(msg.op === "search" && !finished){
+            if(
+                msg.op==="search" &&
+                !finished
+            ){
 
                 finished=true;
 
                 clearTimeout(timeout);
 
+
                 resolve(
                     msg.data?.items || []
                 );
+
 
                 ws.close();
 
             }
 
+
         });
 
 
 
-        ws.on("error", err=>{
+        ws.on("unexpected-response",
+            (req,res)=>{
+
+                if(!finished){
+
+                    finished=true;
+
+                    clearTimeout(timeout);
+
+                    reject(
+                        new Error(
+                            "WebSocket rejected: "+
+                            res.statusCode
+                        )
+                    );
+
+                }
+
+            }
+        );
+
+
+
+        ws.on("error",(err)=>{
 
             if(!finished){
 
@@ -140,7 +197,8 @@ function search(query) {
         });
 
 
-        ws.on("close", ()=>{
+
+        ws.on("close",()=>{
 
             if(!finished){
 
@@ -149,7 +207,9 @@ function search(query) {
                 clearTimeout(timeout);
 
                 reject(
-                    new Error("WebSocket closed")
+                    new Error(
+                        "Connection closed"
+                    )
                 );
 
             }
@@ -159,3 +219,132 @@ function search(query) {
     });
 
 }
+
+
+
+
+app.get("/",async(req,res)=>{
+
+
+    const query=req.query.id;
+
+
+    if(!query){
+
+        return res.json({
+
+            error:
+            "Use ?id=element"
+
+        });
+
+    }
+
+
+
+    const offset=req.query.offset || 0;
+
+    const sort=req.query.sort || "time";
+
+    const order=req.query.order || "ascending";
+
+
+
+    const key=JSON.stringify({
+        query,
+        offset,
+        sort,
+        order
+    });
+
+
+
+    if(cache.has(key)){
+
+        return res.json(
+            cache.get(key)
+        );
+
+    }
+
+
+
+    try{
+
+
+        const items=
+        await connectInfini(
+            query,
+            offset,
+            sort,
+            order
+        );
+
+
+
+        const result={
+
+            query,
+
+            offset:Number(offset),
+
+            count:items.length,
+
+            items
+
+        };
+
+
+
+        cache.set(
+            key,
+            result
+        );
+
+
+        // limit cache size
+        if(cache.size>1000){
+
+            cache.delete(
+                cache.keys().next().value
+            );
+
+        }
+
+
+
+        res.json(result);
+
+
+
+    }
+    catch(err){
+
+
+        console.error(err);
+
+
+        res.status(500).json({
+
+            error:err.message,
+
+            hint:
+            "InfiniBrowser may be blocking server-side websocket clients"
+
+        });
+
+
+    }
+
+
+});
+
+
+
+app.listen(PORT,()=>{
+
+    console.log(
+        "API running on port "+PORT
+    );
+
+});
