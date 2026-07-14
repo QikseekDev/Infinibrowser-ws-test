@@ -159,16 +159,8 @@ export default async function handler(req, res) {
     );
 
 
-    const query = req.query.id;
-
-
-    if (!query) {
-
-        return res.status(400).json({
-            error: "Use ?id=element"
-        });
-
-    }
+    // No longer required — empty query browses/lists everything
+    const query = req.query.id || "";
 
 
     const offset = req.query.offset || 0;
