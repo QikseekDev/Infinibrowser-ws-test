@@ -1,522 +1,365 @@
 import WebSocket from "ws";
 
+const sessions = new Map();
 const cache = new Map();
 
 
-function connectInfini(searchData) {
+function createSession(key) {
 
-    return new Promise((resolve, reject) => {
-
-        let finished = false;
-        let searched = false;
-
-        let nonce = 0;
-
-        let verified = false;
-        let identified = false;
-
-        let heartbeatTimer;
-
-        let ws;
+    let session = {
+        ws: null,
+        nonce: 0,
+        ready: false,
+        verified: false,
+        identified: false,
+        pending: new Map(),
+        internal_offset: 0,
+        heartbeat: null
+    };
 
 
-        function log(...args) {
-            console.log("[Infini]", ...args);
-        }
+    session.ws = new WebSocket(
+        "wss://infinibrowser.wiki/api/ws",
+        {
+            headers: {
+                Origin:
+                    "https://infinibrowser.wiki",
 
-
-        function send(data) {
-
-            log(
-                "SEND:",
-                JSON.stringify(data)
-            );
-
-            ws.send(
-                JSON.stringify(data)
-            );
-
-        }
-
-
-        function nextNonce() {
-
-            nonce++;
-
-            log(
-                "NONCE:",
-                nonce
-            );
-
-            return nonce;
-
-        }
-
-
-
-        function trySearch() {
-
-            log(
-                "trySearch state:",
-                {
-                    verified,
-                    identified,
-                    searched
-                }
-            );
-
-
-            if (
-                verified &&
-                identified &&
-                !searched
-            ) {
-
-                searched = true;
-
-
-                const payload = {
-
-                    op: "search",
-
-                    nonce:
-                        nextNonce(),
-
-                    data:
-                        searchData
-
-                };
-
-
-                send(payload);
-
+                "User-Agent":
+                    "Mozilla/5.0"
             }
-
         }
+    );
+
+
+    function send(op, data, nonce) {
+
+        const msg = {
+            op,
+            nonce,
+            data
+        };
+
+        console.log(
+            "[SEND]",
+            JSON.stringify(msg)
+        );
+
+        session.ws.send(
+            JSON.stringify(msg)
+        );
+    }
 
 
 
+    session.ws.on("open", () => {
 
-
-        const timeout = setTimeout(() => {
-
-            if (!finished) {
-
-                log(
-                    "TIMEOUT. Last sent data:",
-                    searchData
-                );
-
-
-                finished = true;
-
-
-                clearInterval(
-                    heartbeatTimer
-                );
-
-
-                try {
-                    ws?.close();
-                } catch {}
-
-
-                reject(
-                    new Error(
-                        "InfiniBrowser timeout"
-                    )
-                );
-
-            }
-
-        }, 30000);
-
-
-
-
-
-
-        log(
-            "CONNECTING"
+        console.log(
+            "[WS OPEN]"
         );
 
 
-
-        ws = new WebSocket(
-
-            "wss://infinibrowser.wiki/api/ws",
-
+        send(
+            "identify",
             {
+                client:
+                    "InfCraftBrowser/1.6",
 
-                headers: {
+                version:
+                    2,
 
-                    Origin:
-                        "https://infinibrowser.wiki",
-
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-
-                }
-
+                token:
+                    null
             }
-
         );
 
 
+        session.heartbeat =
+            setInterval(() => {
 
+                if (
+                    session.ws.readyState === WebSocket.OPEN
+                ) {
 
-
-
-
-        ws.on("open", () => {
-
-
-            log(
-                "OPEN"
-            );
-
-
-
-            heartbeatTimer =
-                setInterval(() => {
-
-
-                    if (
-                        ws.readyState === WebSocket.OPEN
-                    ) {
-
-                        send({
-                            op:"heartbeat"
-                        });
-
-                    }
-
-
-                }, 5000);
-
-
-
-
-
-
-            send({
-
-                op:"identify",
-
-                data:{
-
-                    client:
-                        "InfCraftBrowser/1.6",
-
-                    version:
-                        2,
-
-                    token:
-                        null
-
-                }
-
-            });
-
-
-        });
-
-
-
-
-
-
-
-
-
-        ws.on("message", raw => {
-
-
-            log(
-                "RAW:",
-                raw.toString()
-            );
-
-
-            let msg;
-
-
-            try {
-
-                msg =
-                    JSON.parse(
-                        raw.toString()
+                    send(
+                        "heartbeat"
                     );
 
-            }
+                }
 
-            catch(err) {
+            },30000);
 
-                log(
-                    "JSON PARSE ERROR",
-                    err
+
+    });
+
+
+
+    session.ws.on("message", raw => {
+
+        let msg;
+
+        try {
+            msg =
+                JSON.parse(
+                    raw.toString()
                 );
+        }
 
-                return;
+        catch {
+            return;
+        }
 
-            }
+
+        console.log(
+            "[RECV]",
+            JSON.stringify(msg)
+        );
 
 
 
-            log(
-                "OP:",
-                msg.op,
-                "DATA:",
-                msg.data
+        if (
+            msg.op === "verify" &&
+            msg.data?.token
+        ) {
+
+            send(
+                "verify",
+                {
+                    token:
+                        msg.data.token
+                }
             );
 
+            return;
+        }
 
 
 
+        if (
+            msg.op === "verify" &&
+            msg.data?.ok
+        ) {
+
+            session.verified = true;
+
+        }
 
 
 
-            if (
+        if (
+            msg.op === "identify"
+        ) {
 
-                msg.op === "verify" &&
-                msg.data?.token
+            session.identified = true;
 
-            ) {
+        }
 
 
-                log(
-                    "VERIFY TOKEN RECEIVED"
+
+        if (
+            msg.op === "search"
+        ) {
+
+            session.internal_offset =
+                msg.data?.internal_offset ??
+                session.internal_offset;
+
+
+            const request =
+                session.pending.get(
+                    msg.nonce
                 );
 
 
-                send({
+            if (request) {
 
-                    op:"verify",
-
-                    data:{
-
-                        token:
-                            msg.data.token
-
-                    }
-
-                });
-
-
-                return;
-
-            }
-
-
-
-
-
-
-
-            if (
-
-                msg.op === "verify" &&
-                msg.data?.ok
-
-            ) {
-
-
-                log(
-                    "VERIFY OK"
+                session.pending.delete(
+                    msg.nonce
                 );
 
 
-                verified = true;
-
-
-                trySearch();
-
-
-                return;
-
-            }
-
-
-
-
-
-
-
-            if (
-
-                msg.op === "identify" &&
-                msg.data?.latest_version
-
-            ) {
-
-
-                log(
-                    "IDENTIFY VERSION:",
-                    msg.data.latest_version
-                );
-
-
-                identified = true;
-
-
-                trySearch();
-
-
-                return;
-
-            }
-
-
-
-
-
-
-
-            if (
-
-                msg.op === "search"
-
-            ) {
-
-
-                log(
-                    "SEARCH RESPONSE",
+                request.resolve(
                     msg.data
                 );
 
-
-
-                if (
-
-                    msg.data?.items &&
-                    !finished
-
-                ) {
-
-
-                    finished = true;
-
-
-                    clearTimeout(
-                        timeout
-                    );
-
-
-                    clearInterval(
-                        heartbeatTimer
-                    );
-
-
-
-                    resolve(
-                        msg.data
-                    );
-
-
-
-                    try {
-                        ws.close();
-                    }
-
-                    catch {}
-
-                }
-
-
             }
 
+        }
 
-
-        });
-
-
-
+    });
 
 
 
+    session.ws.on("close", () => {
+
+        console.log(
+            "[WS CLOSED]"
+        );
+
+
+        clearInterval(
+            session.heartbeat
+        );
+
+
+        sessions.delete(
+            key
+        );
+
+    });
 
 
 
-        ws.on("error", err => {
+    session.ws.on("error", err => {
+
+        console.log(
+            "[WS ERROR]",
+            err
+        );
+
+    });
 
 
-            log(
-                "ERROR:",
-                err
-            );
+
+    sessions.set(
+        key,
+        session
+    );
 
 
-            if (!finished) {
+    return session;
+
+}
 
 
-                finished = true;
+
+async function searchInfini(key, data) {
+
+    let session =
+        sessions.get(key);
 
 
-                clearTimeout(
-                    timeout
+    if (!session) {
+
+        session =
+            createSession(key);
+
+    }
+
+
+
+    while (
+        !session.ready
+    ) {
+
+        if (
+            session.verified &&
+            session.identified
+        ) {
+
+            session.ready = true;
+            break;
+
+        }
+
+
+        await new Promise(
+            r => setTimeout(r,50)
+        );
+
+    }
+
+
+
+    session.nonce++;
+
+
+    const nonce =
+        session.nonce;
+
+
+
+    const payload = {
+
+        offset:
+            data.offset ?? 0,
+
+
+        internal_offset:
+            data.internal_offset ??
+            session.internal_offset,
+
+
+        query:
+            data.query ?? "",
+
+
+        sort:
+            data.sort ?? "time",
+
+
+        order:
+            data.order ?? "ascending"
+
+    };
+
+
+
+    if (
+        data.before !== undefined
+    ) {
+
+        payload.before =
+            data.before;
+
+    }
+
+
+
+    return new Promise((resolve,reject)=>{
+
+
+        const timer =
+            setTimeout(()=>{
+
+                session.pending.delete(
+                    nonce
                 );
-
-
-                clearInterval(
-                    heartbeatTimer
-                );
-
-
-                reject(err);
-
-
-            }
-
-
-        });
-
-
-
-
-
-
-
-
-
-        ws.on("close", code => {
-
-
-            log(
-                "CLOSE:",
-                code
-            );
-
-
-
-            clearInterval(
-                heartbeatTimer
-            );
-
-
-
-            if (!finished) {
-
-
-                finished = true;
-
-
-                clearTimeout(
-                    timeout
-                );
-
 
                 reject(
                     new Error(
-                        "Connection closed"
+                        "Infini timeout"
                     )
                 );
 
+            },20000);
 
+
+
+        session.pending.set(
+            nonce,
+            {
+                resolve(value){
+
+                    clearTimeout(
+                        timer
+                    );
+
+                    resolve(value);
+
+                },
+
+                reject
             }
+        );
 
 
-        });
 
+        sendSearch(
+            session,
+            payload,
+            nonce
+        );
 
 
     });
@@ -525,20 +368,44 @@ function connectInfini(searchData) {
 
 
 
+function sendSearch(session,payload,nonce){
+
+    const msg = {
+
+        op:
+            "search",
+
+        nonce,
+
+        data:
+            payload
+
+    };
+
+
+    console.log(
+        "[SEARCH]",
+        JSON.stringify(msg)
+    );
+
+
+    session.ws.send(
+        JSON.stringify(msg)
+    );
+
+}
 
 
 
 
 
-export default async function handler(req, res) {
+export default async function handler(req,res){
 
 
     res.setHeader(
         "Access-Control-Allow-Origin",
         "*"
     );
-
-
 
 
 
@@ -560,171 +427,85 @@ export default async function handler(req, res) {
 
 
 
-
-
-
-
-
-    const searchData = {
-
+    const data = {
 
         offset:
             Number(offset) || 0,
 
 
-
         internal_offset:
             internal_offset !== undefined
                 ? Number(internal_offset)
-                : 0,
-
+                : undefined,
 
 
         before:
             before !== undefined
                 ? Number(before)
-                : Math.floor(
-                    Date.now() / 1000
-                ),
-
+                : undefined,
 
 
         query:
             String(id || ""),
 
 
-
         sort:
             sort || "time",
-
 
 
         order:
             order || "ascending"
 
-
     };
 
 
 
-
-
-    console.log(
-        "[API] Incoming request:",
-        searchData
-    );
-
-
-
-
-
-
-
     const key =
-        JSON.stringify(searchData);
-
-
-
-
-
-    if (
-        cache.has(key)
-    ) {
-
-
-        console.log(
-            "[CACHE] HIT"
-        );
-
-
-        return res.json(
-            cache.get(key)
-        );
-
-    }
-
-
-
-
-
+        data.query;
 
 
 
     try {
 
 
-        const reply =
-            await connectInfini(
-                searchData
+        const result =
+            await searchInfini(
+                key,
+                data
             );
 
 
 
-        const result = {
-
+        return res.json({
 
             query:
-                searchData.query,
-
+                data.query,
 
 
             offset:
-                searchData.offset,
-
+                data.offset,
 
 
             count:
-                reply.items?.length || 0,
+                result.items?.length || 0,
 
+
+            internal_offset:
+                result.internal_offset,
 
 
             items:
-                reply.items || []
+                result.items || []
 
-        };
-
-
-
-
-        cache.set(
-            key,
-            result
-        );
-
-
-
-
-
-        if (
-            cache.size > 1000
-        ) {
-
-            cache.delete(
-                cache.keys().next().value
-            );
-
-        }
-
-
-
-
-
-        return res.json(
-            result
-        );
-
+        });
 
 
     }
 
-    catch(err) {
 
+    catch(err){
 
-        console.error(
-            "[API ERROR]",
-            err
-        );
-
+        console.error(err);
 
 
         return res.status(500).json({
@@ -734,12 +515,10 @@ export default async function handler(req, res) {
 
 
             sent:
-                searchData
+                data
 
         });
 
-
     }
-
 
 }
