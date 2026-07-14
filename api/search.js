@@ -2,39 +2,23 @@ import WebSocket from "ws";
 
 const cache = new Map();
 
-let nonceCounter = 0;
+let ws = null;
+let ready = false;
+let connecting = null;
+
+let nonce = 0;
+
+const pending = new Map();
 
 
-function connectInfini(searchData) {
 
-    return new Promise((resolve, reject) => {
+function createConnection() {
 
-        let ws;
-        let finished = false;
-        let stage = 0;
-        let heartbeat;
+    if (connecting)
+        return connecting;
 
 
-        const timeout = setTimeout(() => {
-
-            if (!finished) {
-
-                finished = true;
-
-                try {
-                    ws.close();
-                } catch {}
-
-                clearInterval(heartbeat);
-
-                reject(
-                    new Error("InfiniBrowser timeout")
-                );
-            }
-
-        }, 20000);
-
-
+    connecting = new Promise((resolve, reject) => {
 
         ws = new WebSocket(
             "wss://infinibrowser.wiki/api/ws",
@@ -48,21 +32,27 @@ function connectInfini(searchData) {
         );
 
 
+        let verified = false;
+        let identified = false;
 
-        heartbeat = setInterval(() => {
 
-            if (
-                ws.readyState === WebSocket.OPEN
-            ) {
+        const timeout = setTimeout(() => {
 
-                ws.send(JSON.stringify({
-                    op: "heartbeat"
-                }));
+            if (!ready) {
+
+                ws?.close();
+
+                connecting = null;
+
+                reject(
+                    new Error(
+                        "Handshake timeout"
+                    )
+                );
 
             }
 
-        }, 5000);
-
+        }, 15000);
 
 
 
@@ -85,9 +75,24 @@ function connectInfini(searchData) {
 
             }));
 
+
+            setInterval(() => {
+
+                if (
+                    ws &&
+                    ws.readyState === WebSocket.OPEN
+                ) {
+
+                    ws.send(JSON.stringify({
+                        op: "heartbeat"
+                    }));
+
+                }
+
+            }, 5000);
+
+
         });
-
-
 
 
 
@@ -95,12 +100,12 @@ function connectInfini(searchData) {
 
             let msg;
 
-
             try {
 
-                msg = JSON.parse(
-                    raw.toString()
-                );
+                msg =
+                    JSON.parse(
+                        raw.toString()
+                    );
 
             } catch {
 
@@ -113,152 +118,150 @@ function connectInfini(searchData) {
 
 
 
-            // Identify complete
             if (
+                msg.op === "verify" &&
+                msg.data?.ok
+            ) {
 
+                verified = true;
+
+            }
+
+
+
+            if (
                 msg.op === "identify" &&
-
                 msg.data?.latest_version
-
             ) {
 
-
-                ws.send(JSON.stringify({
-
-                    op: "search",
-
-                    nonce: ++nonceCounter,
-
-                    data: {
-
-                        offset: 0,
-
-                        internal_offset: 0,
-
-                        query:
-                            searchData.query,
-
-                        sort:
-                            searchData.sort,
-
-                        order:
-                            searchData.order
-
-                    }
-
-                }));
-
-
-                return;
+                identified = true;
 
             }
 
 
 
-
-
-            // Search response
             if (
-
-                msg.op === "search" &&
-
-                msg.data?.items
-
+                verified &&
+                identified &&
+                !ready
             ) {
 
-
-                // Fake initial page
-                if (stage === 0) {
-
-                    stage = 1;
-
-
-                    ws.send(JSON.stringify({
-
-                        op: "search",
-
-                        nonce: ++nonceCounter,
-
-                        data: searchData
-
-                    }));
-
-
-                    return;
-
-                }
-
-
-
-
-                if (!finished) {
-
-
-                    finished = true;
-
-
-                    clearTimeout(timeout);
-
-                    clearInterval(heartbeat);
-
-
-                    resolve(
-                        msg.data.items
-                    );
-
-
-                    try {
-                        ws.close();
-                    } catch {}
-
-                }
-
-            }
-
-
-        });
-
-
-
-
-        ws.on("error", err => {
-
-            if (!finished) {
-
-                finished = true;
+                ready = true;
 
                 clearTimeout(timeout);
 
-                clearInterval(heartbeat);
+                connecting = null;
 
-                reject(err);
+                resolve();
 
             }
 
-        });
 
+
+            if (
+                msg.op === "search" &&
+                msg.data?.items
+            ) {
+
+
+                const request =
+                    pending.get(
+                        msg.nonce
+                    );
+
+
+                if (request) {
+
+                    pending.delete(
+                        msg.nonce
+                    );
+
+                    request.resolve(
+                        msg.data.items
+                    );
+
+                }
+
+            }
+
+
+        });
 
 
 
         ws.on("close", () => {
 
-            if (!finished) {
+            ready = false;
+            ws = null;
+            connecting = null;
 
-                finished = true;
 
-                clearTimeout(timeout);
+            for (const item of pending.values()) {
 
-                clearInterval(heartbeat);
-
-                reject(
+                item.reject(
                     new Error(
-                        "Connection closed"
+                        "WebSocket closed"
                     )
                 );
 
             }
 
+
+            pending.clear();
+
         });
+
+
+
+        ws.on("error", err => {
+
+            console.error(err);
+
+        });
+
+
+    });
+
+
+    return connecting;
+
+}
+
+
+
+
+
+async function searchInfini(data) {
+
+    await createConnection();
+
+
+    return new Promise((resolve, reject) => {
+
+
+        const id = ++nonce;
+
+
+        pending.set(
+            id,
+            {
+                resolve,
+                reject
+            }
+        );
+
+
+
+        ws.send(JSON.stringify({
+
+            op: "search",
+
+            nonce: id,
+
+            data
+
+        }));
+
 
     });
 
@@ -346,10 +349,8 @@ export default async function handler(req, res) {
 
 
 
-
-    const key = JSON.stringify(
-        searchData
-    );
+    const key =
+        JSON.stringify(searchData);
 
 
 
@@ -364,13 +365,13 @@ export default async function handler(req, res) {
 
 
 
-
     try {
 
 
-        const items = await connectInfini(
-            searchData
-        );
+        const items =
+            await searchInfini(
+                searchData
+            );
 
 
 
@@ -379,20 +380,26 @@ export default async function handler(req, res) {
             query:
                 searchData.query,
 
+
             offset:
                 searchData.offset,
+
 
             internal_offset:
                 searchData.internal_offset,
 
+
             sort:
                 searchData.sort,
+
 
             order:
                 searchData.order,
 
+
             count:
                 items.length,
+
 
             items
 
@@ -406,7 +413,6 @@ export default async function handler(req, res) {
         );
 
 
-
         if (cache.size > 1000) {
 
             cache.delete(
@@ -417,26 +423,20 @@ export default async function handler(req, res) {
 
 
 
-        return res.json(result);
+        res.json(result);
 
 
 
     } catch (err) {
 
 
-        console.error(err);
-
-
-        return res.status(500).json({
+        res.status(500).json({
 
             error:
-                err.message,
-
-
-            sent:
-                searchData
+                err.message
 
         });
+
 
     }
 
