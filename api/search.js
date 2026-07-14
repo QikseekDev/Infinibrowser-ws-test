@@ -8,6 +8,8 @@ function connectInfini(searchData) {
     return new Promise((resolve, reject) => {
 
         let finished = false;
+        let searched = false;
+
         let ws;
 
 
@@ -27,7 +29,7 @@ function connectInfini(searchData) {
 
             }
 
-        }, 15000);
+        }, 20000);
 
 
 
@@ -46,7 +48,6 @@ function connectInfini(searchData) {
 
         ws.on("open", () => {
 
-
             ws.send(JSON.stringify({
 
                 op: "identify",
@@ -54,7 +55,7 @@ function connectInfini(searchData) {
                 data: {
 
                     client:
-                        "InfiniBrowser/1.6",
+                        "InfCraftBrowser/1.6",
 
                     version: 2,
 
@@ -64,25 +65,6 @@ function connectInfini(searchData) {
 
             }));
 
-
-
-            setTimeout(() => {
-
-
-                ws.send(JSON.stringify({
-
-                    op: "search",
-
-                    nonce: 1,
-
-                    data: searchData
-
-                }));
-
-
-            }, 500);
-
-
         });
 
 
@@ -90,7 +72,6 @@ function connectInfini(searchData) {
 
 
         ws.on("message", raw => {
-
 
             let msg;
 
@@ -110,6 +91,80 @@ function connectInfini(searchData) {
 
 
 
+            console.log("WS:", msg.op);
+
+
+
+            // Server challenge
+            if (msg.op === "verify") {
+
+                ws.send(JSON.stringify({
+
+                    op: "verify",
+
+                    data: {
+
+                        token:
+                            msg.data.token
+
+                    }
+
+                }));
+
+                return;
+
+            }
+
+
+
+
+
+            // Keep connection alive
+            if (msg.op === "heartbeat") {
+
+                ws.send(JSON.stringify({
+
+                    op: "heartbeat"
+
+                }));
+
+                return;
+
+            }
+
+
+
+
+
+            // Server finished initializing
+            if (
+                msg.op === "identify" &&
+                msg.data?.latest_version &&
+                !searched
+            ) {
+
+                searched = true;
+
+
+                ws.send(JSON.stringify({
+
+                    op: "search",
+
+                    nonce: 1,
+
+                    data: searchData
+
+                }));
+
+                return;
+
+            }
+
+
+
+
+
+            // Search result
             if (
                 msg.op === "search" &&
                 msg.data?.items &&
@@ -144,21 +199,15 @@ function connectInfini(searchData) {
 
         ws.on("error", err => {
 
-
             if (!finished) {
-
 
                 finished = true;
 
-
                 clearTimeout(timeout);
-
 
                 reject(err);
 
-
             }
-
 
         });
 
@@ -168,23 +217,17 @@ function connectInfini(searchData) {
 
         ws.on("close", () => {
 
-
             if (!finished) {
-
 
                 finished = true;
 
-
                 clearTimeout(timeout);
-
 
                 reject(
                     new Error("Connection closed")
                 );
 
-
             }
-
 
         });
 
@@ -192,6 +235,7 @@ function connectInfini(searchData) {
     });
 
 }
+
 
 
 
@@ -233,7 +277,6 @@ export default async function handler(req, res) {
 
 
     if (selectedSort === "time") {
-
 
         searchData = {
 
@@ -296,10 +339,9 @@ export default async function handler(req, res) {
 
 
 
-
     console.log(
-        "Sending:",
-        JSON.stringify(searchData)
+        "Sending search:",
+        searchData
     );
 
 
@@ -316,6 +358,7 @@ export default async function handler(req, res) {
         );
 
     }
+
 
 
 
@@ -388,7 +431,6 @@ export default async function handler(req, res) {
                 searchData
 
         });
-
 
     }
 
