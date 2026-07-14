@@ -45,7 +45,6 @@ function connectInfini(searchData) {
 
         ws.on("open", () => {
 
-
             ws.send(JSON.stringify({
 
                 op: "identify",
@@ -64,9 +63,7 @@ function connectInfini(searchData) {
             }));
 
 
-
             setTimeout(() => {
-
 
                 ws.send(JSON.stringify({
 
@@ -78,35 +75,21 @@ function connectInfini(searchData) {
 
                 }));
 
-
             }, 500);
-
 
         });
 
 
 
-
-
         ws.on("message", raw => {
-
 
             let msg;
 
-
             try {
-
-                msg =
-                    JSON.parse(
-                        raw.toString()
-                    );
-
+                msg = JSON.parse(raw.toString());
             } catch {
-
                 return;
-
             }
-
 
 
             if (
@@ -114,9 +97,7 @@ function connectInfini(searchData) {
                 !finished
             ) {
 
-
                 finished = true;
-
 
                 clearTimeout(timeout);
 
@@ -130,27 +111,19 @@ function connectInfini(searchData) {
                     ws.close();
                 } catch {}
 
-
             }
-
 
         });
 
 
 
-
-
         ws.on("unexpected-response", (req, res) => {
-
 
             if (!finished) {
 
-
                 finished = true;
 
-
                 clearTimeout(timeout);
-
 
                 reject(
                     new Error(
@@ -161,65 +134,44 @@ function connectInfini(searchData) {
 
             }
 
-
         });
-
-
 
 
 
         ws.on("error", err => {
 
-
             if (!finished) {
-
 
                 finished = true;
 
-
                 clearTimeout(timeout);
-
 
                 reject(err);
 
-
             }
 
-
         });
-
-
 
 
 
         ws.on("close", () => {
 
-
             if (!finished) {
-
 
                 finished = true;
 
-
                 clearTimeout(timeout);
 
-
                 reject(
-                    new Error(
-                        "Connection closed"
-                    )
+                    new Error("Connection closed")
                 );
-
 
             }
 
-
         });
-
 
     });
 }
-
 
 
 
@@ -251,36 +203,40 @@ export default async function handler(req, res) {
 
 
 
-
     const searchData = {
-
 
         query:
             String(id || ""),
-
 
 
         offset:
             Number(offset) || 0,
 
 
-
         internal_offset:
             Number(internal_offset) || 0,
-
 
 
         sort:
             sort || "time",
 
 
-
         order:
             order || "ascending"
 
-
     };
 
+
+
+    // InfiniBrowser only uses the cursor for non-time sorting
+    if (searchData.sort !== "time") {
+
+        searchData.before =
+            Math.floor(
+                Date.now() / 1000
+            );
+
+    }
 
 
 
@@ -290,20 +246,13 @@ export default async function handler(req, res) {
 
 
 
-
-
     if (cache.has(key)) {
-
 
         return res.json(
             cache.get(key)
         );
 
-
     }
-
-
-
 
 
 
@@ -322,47 +271,35 @@ export default async function handler(req, res) {
 
 
 
-
-
         const result = {
-
 
             query:
                 searchData.query,
-
 
 
             offset:
                 searchData.offset,
 
 
-
             internal_offset:
                 searchData.internal_offset,
-
 
 
             sort:
                 searchData.sort,
 
 
-
             order:
                 searchData.order,
-
 
 
             count:
                 items.length,
 
 
-
             items
 
-
         };
-
-
 
 
 
@@ -373,20 +310,13 @@ export default async function handler(req, res) {
 
 
 
-
-
         if (cache.size > 1000) {
-
 
             cache.delete(
                 cache.keys().next().value
             );
 
-
         }
-
-
-
 
 
 
@@ -394,14 +324,10 @@ export default async function handler(req, res) {
 
 
 
-
-
     } catch (err) {
 
 
-
         console.error(err);
-
 
 
         return res.status(500).json({
@@ -417,6 +343,5 @@ export default async function handler(req, res) {
 
 
     }
-
 
 }
