@@ -2,15 +2,19 @@ import WebSocket from "ws";
 
 const cache = new Map();
 
+let globalNonce = 0;
+
 
 function connectInfini(searchData) {
 
     return new Promise((resolve, reject) => {
 
         let finished = false;
-        let identified = false;
         let ws;
         let heartbeat;
+
+
+        const nonce = ++globalNonce;
 
 
         const timeout = setTimeout(() => {
@@ -68,7 +72,7 @@ function connectInfini(searchData) {
             }));
 
 
-            // keep connection alive
+
             heartbeat = setInterval(() => {
 
                 if (
@@ -76,9 +80,7 @@ function connectInfini(searchData) {
                 ) {
 
                     ws.send(JSON.stringify({
-
                         op: "heartbeat"
-
                     }));
 
                 }
@@ -87,6 +89,7 @@ function connectInfini(searchData) {
 
 
         });
+
 
 
 
@@ -110,12 +113,11 @@ function connectInfini(searchData) {
             }
 
 
-
-            console.log("Infini:", msg);
-
+            console.log(msg);
 
 
-            // Server accepted identify
+
+            // Wait until server accepts client
             if (
 
                 msg.op === "identify" &&
@@ -125,15 +127,11 @@ function connectInfini(searchData) {
             ) {
 
 
-                identified = true;
-
-
-
                 ws.send(JSON.stringify({
 
                     op: "search",
 
-                    nonce: 1,
+                    nonce,
 
                     data: searchData
 
@@ -148,10 +146,12 @@ function connectInfini(searchData) {
 
 
 
-            // Search result packet
+            // Search response
             if (
 
                 msg.op === "search" &&
+
+                msg.nonce === nonce &&
 
                 msg.data?.items
 
@@ -169,26 +169,23 @@ function connectInfini(searchData) {
                     clearInterval(heartbeat);
 
 
-
                     resolve(
                         msg.data.items
                     );
 
 
-
                     try {
-
                         ws.close();
-
                     } catch {}
 
-                }
 
+                }
 
             }
 
 
         });
+
 
 
 
@@ -218,6 +215,7 @@ function connectInfini(searchData) {
 
 
 
+
         ws.on("close", () => {
 
 
@@ -233,9 +231,7 @@ function connectInfini(searchData) {
 
 
                 reject(
-                    new Error(
-                        "Connection closed"
-                    )
+                    new Error("Connection closed")
                 );
 
 
@@ -248,6 +244,7 @@ function connectInfini(searchData) {
     });
 
 }
+
 
 
 
@@ -271,8 +268,6 @@ export default async function handler(req, res) {
 
         internal_offset,
 
-        before,
-
         sort,
 
         order,
@@ -280,6 +275,7 @@ export default async function handler(req, res) {
         ...rest
 
     } = req.query;
+
 
 
 
@@ -303,18 +299,6 @@ export default async function handler(req, res) {
                 ? Number(internal_offset)
 
                 : 0,
-
-
-
-        before:
-
-            before !== undefined
-
-                ? Number(before)
-
-                : Math.floor(
-                    Date.now() / 1000
-                ),
 
 
 
@@ -343,6 +327,7 @@ export default async function handler(req, res) {
 
 
 
+
     const key = JSON.stringify(
         searchData
     );
@@ -360,6 +345,7 @@ export default async function handler(req, res) {
 
 
 
+
     try {
 
 
@@ -371,7 +357,6 @@ export default async function handler(req, res) {
 
         const result = {
 
-
             query:
                 searchData.query,
 
@@ -382,10 +367,6 @@ export default async function handler(req, res) {
 
             internal_offset:
                 searchData.internal_offset,
-
-
-            before:
-                searchData.before,
 
 
             sort:
@@ -401,7 +382,6 @@ export default async function handler(req, res) {
 
 
             items
-
 
         };
 
@@ -424,7 +404,7 @@ export default async function handler(req, res) {
 
 
 
-        res.json(result);
+        return res.json(result);
 
 
 
@@ -434,8 +414,7 @@ export default async function handler(req, res) {
         console.error(err);
 
 
-
-        res.status(500).json({
+        return res.status(500).json({
 
             error:
                 err.message,
@@ -448,6 +427,5 @@ export default async function handler(req, res) {
 
 
     }
-
 
 }
