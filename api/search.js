@@ -2,19 +2,17 @@ import WebSocket from "ws";
 
 const cache = new Map();
 
-let globalNonce = 0;
+let nonceCounter = 0;
 
 
 function connectInfini(searchData) {
 
     return new Promise((resolve, reject) => {
 
-        let finished = false;
         let ws;
+        let finished = false;
+        let stage = 0;
         let heartbeat;
-
-
-        const nonce = ++globalNonce;
 
 
         const timeout = setTimeout(() => {
@@ -24,7 +22,7 @@ function connectInfini(searchData) {
                 finished = true;
 
                 try {
-                    ws?.close();
+                    ws.close();
                 } catch {}
 
                 clearInterval(heartbeat);
@@ -32,10 +30,9 @@ function connectInfini(searchData) {
                 reject(
                     new Error("InfiniBrowser timeout")
                 );
-
             }
 
-        }, 15000);
+        }, 20000);
 
 
 
@@ -52,8 +49,24 @@ function connectInfini(searchData) {
 
 
 
-        ws.on("open", () => {
+        heartbeat = setInterval(() => {
 
+            if (
+                ws.readyState === WebSocket.OPEN
+            ) {
+
+                ws.send(JSON.stringify({
+                    op: "heartbeat"
+                }));
+
+            }
+
+        }, 5000);
+
+
+
+
+        ws.on("open", () => {
 
             ws.send(JSON.stringify({
 
@@ -61,7 +74,8 @@ function connectInfini(searchData) {
 
                 data: {
 
-                    client: "InfCraftBrowser/1.6",
+                    client:
+                        "InfCraftBrowser/1.6",
 
                     version: 2,
 
@@ -71,23 +85,6 @@ function connectInfini(searchData) {
 
             }));
 
-
-
-            heartbeat = setInterval(() => {
-
-                if (
-                    ws.readyState === WebSocket.OPEN
-                ) {
-
-                    ws.send(JSON.stringify({
-                        op: "heartbeat"
-                    }));
-
-                }
-
-            }, 5000);
-
-
         });
 
 
@@ -95,7 +92,6 @@ function connectInfini(searchData) {
 
 
         ws.on("message", raw => {
-
 
             let msg;
 
@@ -113,11 +109,11 @@ function connectInfini(searchData) {
             }
 
 
-            console.log(msg);
+            console.log("INF:", msg);
 
 
 
-            // Wait until server accepts client
+            // Identify complete
             if (
 
                 msg.op === "identify" &&
@@ -131,9 +127,24 @@ function connectInfini(searchData) {
 
                     op: "search",
 
-                    nonce,
+                    nonce: ++nonceCounter,
 
-                    data: searchData
+                    data: {
+
+                        offset: 0,
+
+                        internal_offset: 0,
+
+                        query:
+                            searchData.query,
+
+                        sort:
+                            searchData.sort,
+
+                        order:
+                            searchData.order
+
+                    }
 
                 }));
 
@@ -151,11 +162,33 @@ function connectInfini(searchData) {
 
                 msg.op === "search" &&
 
-                msg.nonce === nonce &&
-
                 msg.data?.items
 
             ) {
+
+
+                // Fake initial page
+                if (stage === 0) {
+
+                    stage = 1;
+
+
+                    ws.send(JSON.stringify({
+
+                        op: "search",
+
+                        nonce: ++nonceCounter,
+
+                        data: searchData
+
+                    }));
+
+
+                    return;
+
+                }
+
+
 
 
                 if (!finished) {
@@ -178,7 +211,6 @@ function connectInfini(searchData) {
                         ws.close();
                     } catch {}
 
-
                 }
 
             }
@@ -189,61 +221,49 @@ function connectInfini(searchData) {
 
 
 
-
         ws.on("error", err => {
-
 
             if (!finished) {
 
-
                 finished = true;
-
 
                 clearTimeout(timeout);
 
                 clearInterval(heartbeat);
 
-
                 reject(err);
-
 
             }
 
-
         });
-
 
 
 
 
         ws.on("close", () => {
 
-
             if (!finished) {
 
-
                 finished = true;
-
 
                 clearTimeout(timeout);
 
                 clearInterval(heartbeat);
 
-
                 reject(
-                    new Error("Connection closed")
+                    new Error(
+                        "Connection closed"
+                    )
                 );
-
 
             }
 
-
         });
-
 
     });
 
 }
+
 
 
 
@@ -327,7 +347,6 @@ export default async function handler(req, res) {
 
 
 
-
     const key = JSON.stringify(
         searchData
     );
@@ -360,26 +379,20 @@ export default async function handler(req, res) {
             query:
                 searchData.query,
 
-
             offset:
                 searchData.offset,
-
 
             internal_offset:
                 searchData.internal_offset,
 
-
             sort:
                 searchData.sort,
-
 
             order:
                 searchData.order,
 
-
             count:
                 items.length,
-
 
             items
 
@@ -424,7 +437,6 @@ export default async function handler(req, res) {
                 searchData
 
         });
-
 
     }
 
