@@ -2,7 +2,7 @@ import WebSocket from "ws";
 
 const cache = new Map();
 
-function connectInfini(query, offset, sort, order) {
+function connectInfini(searchData) {
     return new Promise((resolve, reject) => {
 
         let finished = false;
@@ -48,16 +48,13 @@ function connectInfini(query, offset, sort, order) {
 
             setTimeout(() => {
 
+                // searchData is spread as-is so every query param the caller
+                // sent (offset, internal_offset, sort, order, query, and any
+                // future ones) passes straight through to InfiniBrowser.
                 ws.send(JSON.stringify({
                     op: "search",
                     nonce: 1,
-                    data: {
-                        offset: Number(offset) || 0,
-                        internal_offset: 0,
-                        query: String(query),
-                        sort,
-                        order
-                    }
+                    data: searchData
                 }));
 
             }, 500);
@@ -159,21 +156,30 @@ export default async function handler(req, res) {
     );
 
 
-    // No longer required — empty query browses/lists everything
-    const query = req.query.id || "";
-
-
-    const offset = req.query.offset || 0;
-    const sort = req.query.sort || "time";
-    const order = req.query.order || "ascending";
-
-
-    const key = JSON.stringify({
-        query,
+    // Pull out the fields we give defaults to, and keep everything else
+    // in `rest` so any other param the client sends (present or future)
+    // still reaches InfiniBrowser untouched.
+    const {
+        id,
         offset,
+        internal_offset,
         sort,
-        order
-    });
+        order,
+        ...rest
+    } = req.query;
+
+
+    const searchData = {
+        query: String(id || ""),
+        offset: Number(offset) || 0,
+        internal_offset: Number(internal_offset) || 0,
+        sort: sort || "time",
+        order: order || "ascending",
+        ...rest
+    };
+
+
+    const key = JSON.stringify(searchData);
 
 
     if (cache.has(key)) {
@@ -187,17 +193,12 @@ export default async function handler(req, res) {
 
     try {
 
-        const items = await connectInfini(
-            query,
-            offset,
-            sort,
-            order
-        );
+        const items = await connectInfini(searchData);
 
 
         const result = {
-            query,
-            offset: Number(offset),
+            query: searchData.query,
+            offset: searchData.offset,
             count: items.length,
             items
         };
