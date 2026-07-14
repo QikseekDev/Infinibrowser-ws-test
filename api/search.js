@@ -9,164 +9,68 @@ function connectInfini(searchData) {
 
         let finished = false;
         let searched = false;
+
         let nonce = 0;
+
+        let verified = false;
+        let identified = false;
+
         let heartbeatTimer;
 
         let ws;
 
 
+        function log(...args) {
+            console.log("[Infini]", ...args);
+        }
+
+
+        function send(data) {
+
+            log(
+                "SEND:",
+                JSON.stringify(data)
+            );
+
+            ws.send(
+                JSON.stringify(data)
+            );
+
+        }
+
+
         function nextNonce() {
+
             nonce++;
+
+            log(
+                "NONCE:",
+                nonce
+            );
+
             return nonce;
+
         }
 
 
 
-        const timeout = setTimeout(() => {
+        function trySearch() {
 
-            if (!finished) {
-
-                finished = true;
-
-                try {
-                    ws?.close();
-                } catch {}
-
-                reject(
-                    new Error("InfiniBrowser timeout")
-                );
-
-            }
-
-        }, 20000);
-
-
-
-
-        ws = new WebSocket(
-            "wss://infinibrowser.wiki/api/ws",
-            {
-                headers: {
-                    Origin:
-                        "https://infinibrowser.wiki",
-
-                    "User-Agent":
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            log(
+                "trySearch state:",
+                {
+                    verified,
+                    identified,
+                    searched
                 }
-            }
-        );
-
-
-
-
-
-        ws.on("open", () => {
-
-
-            heartbeatTimer = setInterval(() => {
-
-                if (
-                    ws.readyState === WebSocket.OPEN
-                ) {
-
-                    ws.send(JSON.stringify({
-                        op: "heartbeat"
-                    }));
-
-                }
-
-            }, 5000);
-
-
-
-
-            ws.send(JSON.stringify({
-
-                op: "identify",
-
-                data: {
-
-                    client:
-                        "InfCraftBrowser/1.6",
-
-                    version: 2,
-
-                    token: null
-
-                }
-
-            }));
-
-        });
-
-
-
-
-
-
-        ws.on("message", raw => {
-
-
-            let msg;
-
-
-            try {
-
-                msg =
-                    JSON.parse(
-                        raw.toString()
-                    );
-
-            } catch {
-
-                return;
-
-            }
-
-
-
-
-
-            if (msg.op === "verify") {
-
-
-                ws.send(JSON.stringify({
-
-                    op: "verify",
-
-                    data: {
-
-                        token:
-                            msg.data.token
-
-                    }
-
-                }));
-
-                return;
-
-            }
-
-
-
-
-
-            if (msg.op === "heartbeat") {
-
-                return;
-
-            }
-
-
-
+            );
 
 
             if (
-                msg.op === "identify" &&
-                msg.data?.latest_version &&
+                verified &&
+                identified &&
                 !searched
             ) {
-
 
                 searched = true;
 
@@ -184,36 +88,27 @@ function connectInfini(searchData) {
                 };
 
 
-                console.log(
-                    "Sending:",
-                    JSON.stringify(payload)
-                );
-
-
-                ws.send(
-                    JSON.stringify(payload)
-                );
-
-
-                return;
+                send(payload);
 
             }
 
+        }
 
 
 
 
-            if (
-                msg.op === "search" &&
-                msg.data?.items &&
-                !finished
-            ) {
+
+        const timeout = setTimeout(() => {
+
+            if (!finished) {
+
+                log(
+                    "TIMEOUT. Last sent data:",
+                    searchData
+                );
 
 
                 finished = true;
-
-
-                clearTimeout(timeout);
 
 
                 clearInterval(
@@ -221,17 +116,107 @@ function connectInfini(searchData) {
                 );
 
 
-                resolve(
-                    msg.data
-                );
-
-
                 try {
-                    ws.close();
+                    ws?.close();
                 } catch {}
 
 
+                reject(
+                    new Error(
+                        "InfiniBrowser timeout"
+                    )
+                );
+
             }
+
+        }, 30000);
+
+
+
+
+
+
+        log(
+            "CONNECTING"
+        );
+
+
+
+        ws = new WebSocket(
+
+            "wss://infinibrowser.wiki/api/ws",
+
+            {
+
+                headers: {
+
+                    Origin:
+                        "https://infinibrowser.wiki",
+
+                    "User-Agent":
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+
+                }
+
+            }
+
+        );
+
+
+
+
+
+
+
+        ws.on("open", () => {
+
+
+            log(
+                "OPEN"
+            );
+
+
+
+            heartbeatTimer =
+                setInterval(() => {
+
+
+                    if (
+                        ws.readyState === WebSocket.OPEN
+                    ) {
+
+                        send({
+                            op:"heartbeat"
+                        });
+
+                    }
+
+
+                }, 5000);
+
+
+
+
+
+
+            send({
+
+                op:"identify",
+
+                data:{
+
+                    client:
+                        "InfCraftBrowser/1.6",
+
+                    version:
+                        2,
+
+                    token:
+                        null
+
+                }
+
+            });
 
 
         });
@@ -242,7 +227,223 @@ function connectInfini(searchData) {
 
 
 
+
+
+        ws.on("message", raw => {
+
+
+            log(
+                "RAW:",
+                raw.toString()
+            );
+
+
+            let msg;
+
+
+            try {
+
+                msg =
+                    JSON.parse(
+                        raw.toString()
+                    );
+
+            }
+
+            catch(err) {
+
+                log(
+                    "JSON PARSE ERROR",
+                    err
+                );
+
+                return;
+
+            }
+
+
+
+            log(
+                "OP:",
+                msg.op,
+                "DATA:",
+                msg.data
+            );
+
+
+
+
+
+
+
+            if (
+
+                msg.op === "verify" &&
+                msg.data?.token
+
+            ) {
+
+
+                log(
+                    "VERIFY TOKEN RECEIVED"
+                );
+
+
+                send({
+
+                    op:"verify",
+
+                    data:{
+
+                        token:
+                            msg.data.token
+
+                    }
+
+                });
+
+
+                return;
+
+            }
+
+
+
+
+
+
+
+            if (
+
+                msg.op === "verify" &&
+                msg.data?.ok
+
+            ) {
+
+
+                log(
+                    "VERIFY OK"
+                );
+
+
+                verified = true;
+
+
+                trySearch();
+
+
+                return;
+
+            }
+
+
+
+
+
+
+
+            if (
+
+                msg.op === "identify" &&
+                msg.data?.latest_version
+
+            ) {
+
+
+                log(
+                    "IDENTIFY VERSION:",
+                    msg.data.latest_version
+                );
+
+
+                identified = true;
+
+
+                trySearch();
+
+
+                return;
+
+            }
+
+
+
+
+
+
+
+            if (
+
+                msg.op === "search"
+
+            ) {
+
+
+                log(
+                    "SEARCH RESPONSE",
+                    msg.data
+                );
+
+
+
+                if (
+
+                    msg.data?.items &&
+                    !finished
+
+                ) {
+
+
+                    finished = true;
+
+
+                    clearTimeout(
+                        timeout
+                    );
+
+
+                    clearInterval(
+                        heartbeatTimer
+                    );
+
+
+
+                    resolve(
+                        msg.data
+                    );
+
+
+
+                    try {
+                        ws.close();
+                    }
+
+                    catch {}
+
+                }
+
+
+            }
+
+
+
+        });
+
+
+
+
+
+
+
+
+
         ws.on("error", err => {
+
+
+            log(
+                "ERROR:",
+                err
+            );
 
 
             if (!finished) {
@@ -251,7 +452,9 @@ function connectInfini(searchData) {
                 finished = true;
 
 
-                clearTimeout(timeout);
+                clearTimeout(
+                    timeout
+                );
 
 
                 clearInterval(
@@ -273,12 +476,22 @@ function connectInfini(searchData) {
 
 
 
-        ws.on("close", () => {
+
+
+        ws.on("close", code => {
+
+
+            log(
+                "CLOSE:",
+                code
+            );
+
 
 
             clearInterval(
                 heartbeatTimer
             );
+
 
 
             if (!finished) {
@@ -287,11 +500,15 @@ function connectInfini(searchData) {
                 finished = true;
 
 
-                clearTimeout(timeout);
+                clearTimeout(
+                    timeout
+                );
 
 
                 reject(
-                    new Error("Connection closed")
+                    new Error(
+                        "Connection closed"
+                    )
                 );
 
 
@@ -301,9 +518,11 @@ function connectInfini(searchData) {
         });
 
 
+
     });
 
 }
+
 
 
 
@@ -321,6 +540,8 @@ export default async function handler(req, res) {
 
 
 
+
+
     const {
 
         id,
@@ -328,6 +549,8 @@ export default async function handler(req, res) {
         offset,
 
         internal_offset,
+
+        before,
 
         sort,
 
@@ -337,8 +560,7 @@ export default async function handler(req, res) {
 
 
 
-    const selectedSort =
-        sort || "time";
+
 
 
 
@@ -350,19 +572,20 @@ export default async function handler(req, res) {
             Number(offset) || 0,
 
 
+
         internal_offset:
-            Number(internal_offset) || 0,
+            internal_offset !== undefined
+                ? Number(internal_offset)
+                : 0,
 
 
 
-        ...(selectedSort !== "time"
-            ? {
-                before:
-                    Math.floor(
-                        Date.now() / 1000
-                    )
-            }
-            : {}),
+        before:
+            before !== undefined
+                ? Number(before)
+                : Math.floor(
+                    Date.now() / 1000
+                ),
 
 
 
@@ -372,7 +595,7 @@ export default async function handler(req, res) {
 
 
         sort:
-            selectedSort,
+            sort || "time",
 
 
 
@@ -386,21 +609,42 @@ export default async function handler(req, res) {
 
 
 
+    console.log(
+        "[API] Incoming request:",
+        searchData
+    );
+
+
+
+
+
+
+
     const key =
         JSON.stringify(searchData);
 
 
 
 
-    if (cache.has(key)) {
+
+    if (
+        cache.has(key)
+    ) {
+
+
+        console.log(
+            "[CACHE] HIT"
+        );
 
 
         return res.json(
             cache.get(key)
         );
 
-
     }
+
+
+
 
 
 
@@ -423,19 +667,21 @@ export default async function handler(req, res) {
                 searchData.query,
 
 
+
             offset:
                 searchData.offset,
+
 
 
             count:
                 reply.items?.length || 0,
 
 
+
             items:
                 reply.items || []
 
         };
-
 
 
 
@@ -448,7 +694,10 @@ export default async function handler(req, res) {
 
 
 
-        if (cache.size > 1000) {
+
+        if (
+            cache.size > 1000
+        ) {
 
             cache.delete(
                 cache.keys().next().value
@@ -460,15 +709,22 @@ export default async function handler(req, res) {
 
 
 
-        return res.json(result);
+        return res.json(
+            result
+        );
 
 
 
+    }
 
-    } catch (err) {
+    catch(err) {
 
 
-        console.error(err);
+        console.error(
+            "[API ERROR]",
+            err
+        );
+
 
 
         return res.status(500).json({
@@ -484,5 +740,6 @@ export default async function handler(req, res) {
 
 
     }
+
 
 }
