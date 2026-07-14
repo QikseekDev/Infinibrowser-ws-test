@@ -3,67 +3,23 @@ import WebSocket from "ws";
 const cache = new Map();
 
 
-function getBaseNonce(sort) {
-
-    switch (sort) {
-
-        case "time":
-            return 1;
-
-        case "name":
-            return 6;
-
-        case "emoji":
-            return 7;
-
-        case "length":
-            return 8;
-
-        case "recipe_count":
-            return 11;
-
-        case "use_count":
-            return 12;
-
-        case "popularity":
-            return 13;
-
-        case "random":
-            return 14;
-
-        default:
-            return 1;
-
-    }
-
-}
-
-
-
-function getNonce(sort, offset) {
-
-    const page =
-        Math.floor(
-            (Number(offset) || 0) / 200
-        );
-
-    return (
-        getBaseNonce(sort) + page
-    );
-
-}
-
-
-
-
-
 function connectInfini(searchData) {
 
     return new Promise((resolve, reject) => {
 
         let finished = false;
+        let searched = false;
+        let nonce = 0;
+        let heartbeatTimer;
 
         let ws;
+
+
+        function nextNonce() {
+            nonce++;
+            return nonce;
+        }
+
 
 
         const timeout = setTimeout(() => {
@@ -86,6 +42,7 @@ function connectInfini(searchData) {
 
 
 
+
         ws = new WebSocket(
             "wss://infinibrowser.wiki/api/ws",
             {
@@ -101,7 +58,26 @@ function connectInfini(searchData) {
 
 
 
+
+
         ws.on("open", () => {
+
+
+            heartbeatTimer = setInterval(() => {
+
+                if (
+                    ws.readyState === WebSocket.OPEN
+                ) {
+
+                    ws.send(JSON.stringify({
+                        op: "heartbeat"
+                    }));
+
+                }
+
+            }, 5000);
+
+
 
 
             ws.send(JSON.stringify({
@@ -127,9 +103,12 @@ function connectInfini(searchData) {
 
 
 
+
         ws.on("message", raw => {
 
+
             let msg;
+
 
             try {
 
@@ -146,7 +125,10 @@ function connectInfini(searchData) {
 
 
 
+
+
             if (msg.op === "verify") {
+
 
                 ws.send(JSON.stringify({
 
@@ -171,12 +153,6 @@ function connectInfini(searchData) {
 
             if (msg.op === "heartbeat") {
 
-                ws.send(JSON.stringify({
-
-                    op: "heartbeat"
-
-                }));
-
                 return;
 
             }
@@ -187,24 +163,36 @@ function connectInfini(searchData) {
 
             if (
                 msg.op === "identify" &&
-                msg.data?.latest_version
+                msg.data?.latest_version &&
+                !searched
             ) {
 
 
-                ws.send(JSON.stringify({
+                searched = true;
+
+
+                const payload = {
 
                     op: "search",
 
                     nonce:
-                        getNonce(
-                            searchData.sort,
-                            searchData.offset
-                        ),
+                        nextNonce(),
 
                     data:
                         searchData
 
-                }));
+                };
+
+
+                console.log(
+                    "Sending:",
+                    JSON.stringify(payload)
+                );
+
+
+                ws.send(
+                    JSON.stringify(payload)
+                );
 
 
                 return;
@@ -228,6 +216,11 @@ function connectInfini(searchData) {
                 clearTimeout(timeout);
 
 
+                clearInterval(
+                    heartbeatTimer
+                );
+
+
                 resolve(
                     msg.data
                 );
@@ -247,19 +240,34 @@ function connectInfini(searchData) {
 
 
 
+
+
         ws.on("error", err => {
+
 
             if (!finished) {
 
+
                 finished = true;
+
 
                 clearTimeout(timeout);
 
+
+                clearInterval(
+                    heartbeatTimer
+                );
+
+
                 reject(err);
+
 
             }
 
+
         });
+
+
 
 
 
@@ -267,17 +275,28 @@ function connectInfini(searchData) {
 
         ws.on("close", () => {
 
+
+            clearInterval(
+                heartbeatTimer
+            );
+
+
             if (!finished) {
+
 
                 finished = true;
 
+
                 clearTimeout(timeout);
+
 
                 reject(
                     new Error("Connection closed")
                 );
 
+
             }
+
 
         });
 
@@ -285,6 +304,7 @@ function connectInfini(searchData) {
     });
 
 }
+
 
 
 
@@ -322,39 +342,46 @@ export default async function handler(req, res) {
 
 
 
-    const searchData =
-        {
 
-            offset:
-                Number(offset) || 0,
+    const searchData = {
 
 
-            internal_offset:
-                Number(internal_offset) || 0,
+        offset:
+            Number(offset) || 0,
 
 
-            ...(selectedSort !== "time"
-                ? {
-                    before:
-                        Math.floor(
-                            Date.now() / 1000
-                        )
-                }
-                : {}),
+        internal_offset:
+            Number(internal_offset) || 0,
 
 
-            query:
-                String(id || ""),
+
+        ...(selectedSort !== "time"
+            ? {
+                before:
+                    Math.floor(
+                        Date.now() / 1000
+                    )
+            }
+            : {}),
 
 
-            sort:
-                selectedSort,
+
+        query:
+            String(id || ""),
 
 
-            order:
-                order || "ascending"
 
-        };
+        sort:
+            selectedSort,
+
+
+
+        order:
+            order || "ascending"
+
+
+    };
+
 
 
 
@@ -364,11 +391,14 @@ export default async function handler(req, res) {
 
 
 
+
     if (cache.has(key)) {
+
 
         return res.json(
             cache.get(key)
         );
+
 
     }
 
@@ -387,6 +417,7 @@ export default async function handler(req, res) {
 
 
         const result = {
+
 
             query:
                 searchData.query,
@@ -407,10 +438,13 @@ export default async function handler(req, res) {
 
 
 
+
+
         cache.set(
             key,
             result
         );
+
 
 
 
@@ -424,7 +458,10 @@ export default async function handler(req, res) {
 
 
 
+
+
         return res.json(result);
+
 
 
 
@@ -444,6 +481,7 @@ export default async function handler(req, res) {
                 searchData
 
         });
+
 
     }
 
