@@ -2,23 +2,25 @@ import WebSocket from "ws";
 
 const cache = new Map();
 
-let ws = null;
-let ready = false;
-let connecting = null;
+function connectInfini(searchData) {
+    return new Promise((resolve, reject) => {
 
-let nonce = 0;
+        let finished = false;
 
-const pending = new Map();
+        let ws;
 
+        const timeout = setTimeout(() => {
+            if (!finished) {
+                finished = true;
 
+                try {
+                    ws?.close();
+                } catch {}
 
-function createConnection() {
+                reject(new Error("InfiniBrowser timeout"));
+            }
+        }, 15000);
 
-    if (connecting)
-        return connecting;
-
-
-    connecting = new Promise((resolve, reject) => {
 
         ws = new WebSocket(
             "wss://infinibrowser.wiki/api/ws",
@@ -32,65 +34,30 @@ function createConnection() {
         );
 
 
-        let verified = false;
-        let identified = false;
-
-
-        const timeout = setTimeout(() => {
-
-            if (!ready) {
-
-                ws?.close();
-
-                connecting = null;
-
-                reject(
-                    new Error(
-                        "Handshake timeout"
-                    )
-                );
-
-            }
-
-        }, 15000);
-
-
-
         ws.on("open", () => {
 
             ws.send(JSON.stringify({
-
                 op: "identify",
-
                 data: {
-
-                    client:
-                        "InfCraftBrowser/1.6",
-
+                    client: "InfiniBrowser/1.6",
                     version: 2,
-
                     token: null
-
                 }
-
             }));
 
 
-            setInterval(() => {
+            setTimeout(() => {
 
-                if (
-                    ws &&
-                    ws.readyState === WebSocket.OPEN
-                ) {
+                // searchData is spread as-is so every query param the caller
+                // sent (offset, internal_offset, sort, order, query, and any
+                // future ones) passes straight through to InfiniBrowser.
+                ws.send(JSON.stringify({
+                    op: "search",
+                    nonce: 1,
+                    data: searchData
+                }));
 
-                    ws.send(JSON.stringify({
-                        op: "heartbeat"
-                    }));
-
-                }
-
-            }, 5000);
-
+            }, 500);
 
         });
 
@@ -101,113 +68,44 @@ function createConnection() {
             let msg;
 
             try {
-
-                msg =
-                    JSON.parse(
-                        raw.toString()
-                    );
-
+                msg = JSON.parse(raw.toString());
             } catch {
-
                 return;
-
             }
 
 
-            console.log("INF:", msg);
+            if (msg.op === "search" && !finished) {
 
-
-
-            if (
-                msg.op === "verify" &&
-                msg.data?.ok
-            ) {
-
-                verified = true;
-
-            }
-
-
-
-            if (
-                msg.op === "identify" &&
-                msg.data?.latest_version
-            ) {
-
-                identified = true;
-
-            }
-
-
-
-            if (
-                verified &&
-                identified &&
-                !ready
-            ) {
-
-                ready = true;
+                finished = true;
 
                 clearTimeout(timeout);
 
-                connecting = null;
+                resolve(
+                    msg.data || {}
+                );
 
-                resolve();
-
+                ws.close();
             }
-
-
-
-            if (
-                msg.op === "search" &&
-                msg.data?.items
-            ) {
-
-
-                const request =
-                    pending.get(
-                        msg.nonce
-                    );
-
-
-                if (request) {
-
-                    pending.delete(
-                        msg.nonce
-                    );
-
-                    request.resolve(
-                        msg.data.items
-                    );
-
-                }
-
-            }
-
 
         });
 
 
 
-        ws.on("close", () => {
+        ws.on("unexpected-response", (req, res) => {
 
-            ready = false;
-            ws = null;
-            connecting = null;
+            if (!finished) {
 
+                finished = true;
 
-            for (const item of pending.values()) {
+                clearTimeout(timeout);
 
-                item.reject(
+                reject(
                     new Error(
-                        "WebSocket closed"
+                        "WebSocket rejected: " + res.statusCode
                     )
                 );
 
             }
-
-
-            pending.clear();
 
         });
 
@@ -215,66 +113,42 @@ function createConnection() {
 
         ws.on("error", err => {
 
-            console.error(err);
+            if (!finished) {
+
+                finished = true;
+
+                clearTimeout(timeout);
+
+                reject(err);
+
+            }
 
         });
 
 
-    });
 
+        ws.on("close", () => {
 
-    return connecting;
+            if (!finished) {
 
-}
+                finished = true;
 
+                clearTimeout(timeout);
 
+                reject(
+                    new Error("Connection closed")
+                );
 
-
-
-async function searchInfini(data) {
-
-    await createConnection();
-
-
-    return new Promise((resolve, reject) => {
-
-
-        const id = ++nonce;
-
-
-        pending.set(
-            id,
-            {
-                resolve,
-                reject
             }
-        );
 
-
-
-        ws.send(JSON.stringify({
-
-            op: "search",
-
-            nonce: id,
-
-            data
-
-        }));
-
+        });
 
     });
-
 }
-
-
-
-
 
 
 
 export default async function handler(req, res) {
-
 
     res.setHeader(
         "Access-Control-Allow-Origin",
@@ -282,76 +156,37 @@ export default async function handler(req, res) {
     );
 
 
-
+    // Pull out the fields we give defaults to, and keep everything else
+    // in `rest` so any other param the client sends (present or future)
+    // still reaches InfiniBrowser untouched.
+    //
+    // `before` is a cursor (unix timestamp) InfiniBrowser's own client sends
+    // once you're past the first page when sorting by time — offset alone
+    // doesn't keep working past ~200 items, this is what actually drives
+    // continued pagination. Pass it through explicitly when present.
     const {
-
         id,
-
         offset,
-
         internal_offset,
-
+        before,
         sort,
-
         order,
-
         ...rest
-
     } = req.query;
 
 
-
-
     const searchData = {
-
-
-        offset:
-
-            offset !== undefined
-
-                ? Number(offset)
-
-                : 0,
-
-
-
-        internal_offset:
-
-            internal_offset !== undefined
-
-                ? Number(internal_offset)
-
-                : 0,
-
-
-
-        query:
-
-            String(id || ""),
-
-
-
-        sort:
-
-            sort || "time",
-
-
-
-        order:
-
-            order || "ascending",
-
-
-
+        query: String(id || ""),
+        offset: Number(offset) || 0,
+        internal_offset: Number(internal_offset) || 0,
+        sort: sort || "time",
+        order: order || "ascending",
+        ...(before !== undefined ? { before: Number(before) } : {}),
         ...rest
-
     };
 
 
-
-    const key =
-        JSON.stringify(searchData);
-
+    const key = JSON.stringify(searchData);
 
 
     if (cache.has(key)) {
@@ -363,48 +198,22 @@ export default async function handler(req, res) {
     }
 
 
-
-
     try {
 
-
-        const items =
-            await searchInfini(
-                searchData
-            );
-
+        const reply = await connectInfini(searchData);
+        const items = reply.items || [];
 
 
         const result = {
-
-            query:
-                searchData.query,
-
-
-            offset:
-                searchData.offset,
-
-
-            internal_offset:
-                searchData.internal_offset,
-
-
-            sort:
-                searchData.sort,
-
-
-            order:
-                searchData.order,
-
-
-            count:
-                items.length,
-
-
-            items
-
+            query: searchData.query,
+            offset: searchData.offset,
+            count: items.length,
+            items,
+            // pass through any pagination cursor InfiniBrowser echoes back
+            // (e.g. a "before" timestamp for the next page) so the client
+            // can chain requests correctly instead of guessing offsets
+            ...(reply.before !== undefined ? { before: reply.before } : {})
         };
-
 
 
         cache.set(
@@ -422,22 +231,19 @@ export default async function handler(req, res) {
         }
 
 
-
-        res.json(result);
-
+        return res.json(result);
 
 
     } catch (err) {
 
+        console.error(err);
 
-        res.status(500).json({
-
-            error:
-                err.message
-
+        return res.status(500).json({
+            error: err.message,
+            hint:
+            "InfiniBrowser may be blocking server-side websocket clients"
         });
-
 
     }
 
-}
+        }
