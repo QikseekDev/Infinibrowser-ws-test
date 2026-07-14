@@ -3,12 +3,65 @@ import WebSocket from "ws";
 const cache = new Map();
 
 
+function getBaseNonce(sort) {
+
+    switch (sort) {
+
+        case "time":
+            return 1;
+
+        case "name":
+            return 6;
+
+        case "emoji":
+            return 7;
+
+        case "length":
+            return 8;
+
+        case "recipe_count":
+            return 11;
+
+        case "use_count":
+            return 12;
+
+        case "popularity":
+            return 13;
+
+        case "random":
+            return 14;
+
+        default:
+            return 1;
+
+    }
+
+}
+
+
+
+function getNonce(sort, offset) {
+
+    const page =
+        Math.floor(
+            (Number(offset) || 0) / 200
+        );
+
+    return (
+        getBaseNonce(sort) + page
+    );
+
+}
+
+
+
+
+
 function connectInfini(searchData) {
 
     return new Promise((resolve, reject) => {
 
         let finished = false;
-        let searched = false;
 
         let ws;
 
@@ -37,7 +90,9 @@ function connectInfini(searchData) {
             "wss://infinibrowser.wiki/api/ws",
             {
                 headers: {
-                    Origin: "https://infinibrowser.wiki",
+                    Origin:
+                        "https://infinibrowser.wiki",
+
                     "User-Agent":
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
                 }
@@ -47,6 +102,7 @@ function connectInfini(searchData) {
 
 
         ws.on("open", () => {
+
 
             ws.send(JSON.stringify({
 
@@ -75,7 +131,6 @@ function connectInfini(searchData) {
 
             let msg;
 
-
             try {
 
                 msg =
@@ -91,11 +146,6 @@ function connectInfini(searchData) {
 
 
 
-            console.log("WS:", msg.op);
-
-
-
-            // Server challenge
             if (msg.op === "verify") {
 
                 ws.send(JSON.stringify({
@@ -119,7 +169,6 @@ function connectInfini(searchData) {
 
 
 
-            // Keep connection alive
             if (msg.op === "heartbeat") {
 
                 ws.send(JSON.stringify({
@@ -136,25 +185,27 @@ function connectInfini(searchData) {
 
 
 
-            // Server finished initializing
             if (
                 msg.op === "identify" &&
-                msg.data?.latest_version &&
-                !searched
+                msg.data?.latest_version
             ) {
-
-                searched = true;
 
 
                 ws.send(JSON.stringify({
 
                     op: "search",
 
-                    nonce: 1,
+                    nonce:
+                        getNonce(
+                            searchData.sort,
+                            searchData.offset
+                        ),
 
-                    data: searchData
+                    data:
+                        searchData
 
                 }));
+
 
                 return;
 
@@ -164,7 +215,6 @@ function connectInfini(searchData) {
 
 
 
-            // Search result
             if (
                 msg.op === "search" &&
                 msg.data?.items &&
@@ -272,13 +322,8 @@ export default async function handler(req, res) {
 
 
 
-    let searchData;
-
-
-
-    if (selectedSort === "time") {
-
-        searchData = {
+    const searchData =
+        {
 
             offset:
                 Number(offset) || 0,
@@ -288,37 +333,14 @@ export default async function handler(req, res) {
                 Number(internal_offset) || 0,
 
 
-            query:
-                String(id || ""),
-
-
-            sort:
-                "time",
-
-
-            order:
-                order || "ascending"
-
-        };
-
-
-    } else {
-
-
-        searchData = {
-
-            offset:
-                Number(offset) || 0,
-
-
-            internal_offset:
-                Number(internal_offset) || 0,
-
-
-            before:
-                Math.floor(
-                    Date.now() / 1000
-                ),
+            ...(selectedSort !== "time"
+                ? {
+                    before:
+                        Math.floor(
+                            Date.now() / 1000
+                        )
+                }
+                : {}),
 
 
             query:
@@ -334,15 +356,6 @@ export default async function handler(req, res) {
 
         };
 
-
-    }
-
-
-
-    console.log(
-        "Sending search:",
-        searchData
-    );
 
 
 
