@@ -4,6 +4,7 @@ const cache = new Map();
 
 
 function connectInfini(searchData) {
+
     return new Promise((resolve, reject) => {
 
         let finished = false;
@@ -45,6 +46,7 @@ function connectInfini(searchData) {
 
         ws.on("open", () => {
 
+
             ws.send(JSON.stringify({
 
                 op: "identify",
@@ -63,7 +65,9 @@ function connectInfini(searchData) {
             }));
 
 
+
             setTimeout(() => {
+
 
                 ws.send(JSON.stringify({
 
@@ -75,35 +79,52 @@ function connectInfini(searchData) {
 
                 }));
 
+
             }, 500);
+
 
         });
 
 
 
+
+
         ws.on("message", raw => {
+
 
             let msg;
 
+
             try {
-                msg = JSON.parse(raw.toString());
+
+                msg =
+                    JSON.parse(
+                        raw.toString()
+                    );
+
             } catch {
+
                 return;
+
             }
+
 
 
             if (
                 msg.op === "search" &&
+                msg.data?.items &&
                 !finished
             ) {
 
+
                 finished = true;
+
 
                 clearTimeout(timeout);
 
 
                 resolve(
-                    msg.data || {}
+                    msg.data
                 );
 
 
@@ -111,66 +132,65 @@ function connectInfini(searchData) {
                     ws.close();
                 } catch {}
 
+
             }
+
 
         });
 
 
-
-        ws.on("unexpected-response", (req, res) => {
-
-            if (!finished) {
-
-                finished = true;
-
-                clearTimeout(timeout);
-
-                reject(
-                    new Error(
-                        "WebSocket rejected: " +
-                        res.statusCode
-                    )
-                );
-
-            }
-
-        });
 
 
 
         ws.on("error", err => {
 
+
             if (!finished) {
+
 
                 finished = true;
 
+
                 clearTimeout(timeout);
+
 
                 reject(err);
 
+
             }
 
+
         });
+
+
 
 
 
         ws.on("close", () => {
 
+
             if (!finished) {
+
 
                 finished = true;
 
+
                 clearTimeout(timeout);
+
 
                 reject(
                     new Error("Connection closed")
                 );
 
+
             }
+
 
         });
 
+
     });
+
 }
 
 
@@ -203,41 +223,84 @@ export default async function handler(req, res) {
 
 
 
-    const searchData = {
-
-        query:
-            String(id || ""),
-
-
-        offset:
-            Number(offset) || 0,
-
-
-        internal_offset:
-            Number(internal_offset) || 0,
-
-
-        sort:
-            sort || "time",
-
-
-        order:
-            order || "ascending"
-
-    };
+    const selectedSort =
+        sort || "time";
 
 
 
-    // InfiniBrowser only uses the cursor for non-time sorting
-    if (searchData.sort !== "time") {
+    let searchData;
 
-        searchData.before =
-            Math.floor(
-                Date.now() / 1000
-            );
+
+
+    if (selectedSort === "time") {
+
+
+        searchData = {
+
+            offset:
+                Number(offset) || 0,
+
+
+            internal_offset:
+                Number(internal_offset) || 0,
+
+
+            query:
+                String(id || ""),
+
+
+            sort:
+                "time",
+
+
+            order:
+                order || "ascending"
+
+        };
+
+
+    } else {
+
+
+        searchData = {
+
+            offset:
+                Number(offset) || 0,
+
+
+            internal_offset:
+                Number(internal_offset) || 0,
+
+
+            before:
+                Math.floor(
+                    Date.now() / 1000
+                ),
+
+
+            query:
+                String(id || ""),
+
+
+            sort:
+                selectedSort,
+
+
+            order:
+                order || "ascending"
+
+        };
+
 
     }
 
+
+
+
+    console.log(
+        "Sending:",
+        JSON.stringify(searchData)
+    );
 
 
 
@@ -256,6 +319,7 @@ export default async function handler(req, res) {
 
 
 
+
     try {
 
 
@@ -263,11 +327,6 @@ export default async function handler(req, res) {
             await connectInfini(
                 searchData
             );
-
-
-
-        const items =
-            reply.items || [];
 
 
 
@@ -281,23 +340,12 @@ export default async function handler(req, res) {
                 searchData.offset,
 
 
-            internal_offset:
-                searchData.internal_offset,
-
-
-            sort:
-                searchData.sort,
-
-
-            order:
-                searchData.order,
-
-
             count:
-                items.length,
+                reply.items?.length || 0,
 
 
-            items
+            items:
+                reply.items || []
 
         };
 
