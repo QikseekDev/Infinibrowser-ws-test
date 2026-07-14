@@ -6,7 +6,6 @@ function connectInfini(searchData) {
     return new Promise((resolve, reject) => {
 
         let finished = false;
-
         let ws;
 
         const timeout = setTimeout(() => {
@@ -46,21 +45,13 @@ function connectInfini(searchData) {
             }));
 
 
-            setTimeout(() => {
-
-                // searchData is spread as-is so every query param the caller
-                // sent (offset, internal_offset, sort, order, query, and any
-                // future ones) passes straight through to InfiniBrowser.
-                ws.send(JSON.stringify({
-                    op: "search",
-                    nonce: 1,
-                    data: searchData
-                }));
-
-            }, 500);
+            ws.send(JSON.stringify({
+                op: "search",
+                nonce: Date.now(),
+                data: searchData
+            }));
 
         });
-
 
 
         ws.on("message", raw => {
@@ -84,11 +75,14 @@ function connectInfini(searchData) {
                     msg.data?.items || []
                 );
 
-                ws.close();
+
+                try {
+                    ws.close();
+                } catch {}
+
             }
 
         });
-
 
 
         ws.on("unexpected-response", (req, res) => {
@@ -110,7 +104,6 @@ function connectInfini(searchData) {
         });
 
 
-
         ws.on("error", err => {
 
             if (!finished) {
@@ -124,7 +117,6 @@ function connectInfini(searchData) {
             }
 
         });
-
 
 
         ws.on("close", () => {
@@ -156,13 +148,11 @@ export default async function handler(req, res) {
     );
 
 
-    // Pull out the fields we give defaults to, and keep everything else
-    // in `rest` so any other param the client sends (present or future)
-    // still reaches InfiniBrowser untouched.
     const {
         id,
         offset,
         internal_offset,
+        before,
         sort,
         order,
         ...rest
@@ -170,11 +160,34 @@ export default async function handler(req, res) {
 
 
     const searchData = {
+
+        // Pagination
+        offset: offset
+            ? Number(offset)
+            : 0,
+
+        internal_offset: internal_offset
+            ? Number(internal_offset)
+            : 0,
+
+
+        // Current Unix timestamp if not provided
+        before: before
+            ? Number(before)
+            : Math.floor(Date.now() / 1000),
+
+
+        // Search query
         query: String(id || ""),
-        offset: Number(offset) || 0,
-        internal_offset: Number(internal_offset) || 0,
+
+
+        // Defaults
         sort: sort || "time",
+
         order: order || "ascending",
+
+
+        // Pass through anything else
         ...rest
     };
 
@@ -197,10 +210,27 @@ export default async function handler(req, res) {
 
 
         const result = {
+
             query: searchData.query,
+
             offset: searchData.offset,
+
+            internal_offset:
+                searchData.internal_offset,
+
+            before:
+                searchData.before,
+
+            sort:
+                searchData.sort,
+
+            order:
+                searchData.order,
+
             count: items.length,
+
             items
+
         };
 
 
@@ -210,6 +240,7 @@ export default async function handler(req, res) {
         );
 
 
+        // Keep cache size limited
         if (cache.size > 1000) {
 
             cache.delete(
@@ -226,10 +257,16 @@ export default async function handler(req, res) {
 
         console.error(err);
 
+
         return res.status(500).json({
+
             error: err.message,
+
+            sent: searchData,
+
             hint:
-            "InfiniBrowser may be blocking server-side websocket clients"
+                "InfiniBrowser may have rejected the request"
+
         });
 
     }
